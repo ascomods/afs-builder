@@ -1,28 +1,26 @@
-from typing import io
-import inspect, os
-import datetime
+import os, stat
 import re
-import struct
+import datetime
+import shutil
+import inspect
+import core.common as cm
 
-endian = '<'
+endian = 'big'
 
-# bytes to num
-def b2i(num, format = 'l'):
-   # try:
-    num = int(struct.unpack(f'{endian}{format}', num)[0])
-   # except Exception as e:
-   #     print(e)
-   #     num = int(struct.unpack(f'{endian}f', num)[0])
-    return num
+def toggle_endian():
+    global endian
+    if (endian == 'big'):
+        endian = 'little'
+    else:
+        endian = 'big'
 
-# num to bytes
-def i2b(num, format = 'l'):
-    #try:
-    num = struct.pack(f'{endian}{format}', num)
-    #except Exception as e:
-    #    print(e)
-    #    num = struct.pack(f'{endian}f', num)
-    return num
+# bytes to int
+def b2i(num):
+    return int.from_bytes(num, byteorder=endian)
+
+# int to bytes
+def i2b(num, length = 4):
+    return num.to_bytes(length, byteorder=endian)
 
 # extend bytes to given size
 def extb(bytes, size):
@@ -36,7 +34,14 @@ def search_index_dict(dict, search_val):
     for key, val in dict.items():
         if val == search_val:
             return key
-    raise Exception("Key not found in dict")
+    raise KeyError("Key not found in dict: " + str(search_val))
+
+# Search value in list values of dict
+def search_index_dict_list(dict, search_val):
+    for key, search_list in dict.items():
+        if (isinstance(search_list, list) and (search_val in search_list)):
+            return key
+    raise KeyError("Key not found in dict: " + str(search_val))
 
 def keep_cursor_pos(function):
     """
@@ -61,10 +66,10 @@ def keep_cursor_pos(function):
     return wrapper
 
 @keep_cursor_pos
-def read_string_inplace(stream: io, start_offset, max_size = 100):
+def read_string_inplace(stream, start_offset, max_size = 100):
     return read_string(stream, start_offset, max_size)
 
-def read_string(input: io, start_offset, max_size):
+def read_string(input, start_offset, max_size):
     """
     reads characters until it finds 00
     """
@@ -100,16 +105,60 @@ def b2s_name(bytes):
 def s2b_name(string):
     return string.encode('latin1')
 
-def read_until(stream, offset, endChar = b'\x00'):
+def format_jap_name(string):
+    while len(string) > 0:
+        try:
+            string.decode('utf-8')
+            break
+        except:
+            string = string[1:]
+    return string
+
+def read_until(stream, offset, end_char = b'\x00'):
     initial_pos = stream.tell()
     stream.seek(offset)
     res = bytearray(stream.read(1))
     current_byte = b''
-    while current_byte != endChar:
+    while current_byte != end_char:
         res += current_byte
         current_byte = stream.read(1)
     stream.seek(initial_pos)
     return bytes(res)
+
+def init_decomp_dir():
+    if not os.path.exists(cm.decomp_path):
+        os.mkdir(cm.decomp_path)
+
+def init_temp_dir():
+    if not os.path.exists(cm.temp_path):
+        os.mkdir(cm.temp_path)
+
+def copy_to_temp_dir(path):
+    init_temp_dir()
+    name, ext = os.path.splitext(os.path.basename(path))
+    shutil.copy2(path, cm.temp_path)
+    return os.path.join(cm.temp_path, name + ext)
+
+def empty_temp_dir():
+    path = os.path.abspath(cm.temp_path)
+    if os.path.exists(path):
+        shutil.rmtree(path, onerror = on_rm_error)
+
+def clear_temp_dir():
+    empty_temp_dir()
+    init_temp_dir()
+
+def make_parent_dirs(path):
+    parents_path = os.path.dirname(path)
+    if (parents_path):
+        os.makedirs(parents_path, exist_ok=True)
+
+def on_rm_error(func, path, exc_info):
+    os.chmod( path, stat.S_IWRITE )
+    os.unlink( path )
+
+def print_hex(data):
+    print(''.join(r' '+hex(letter)[2:] for letter in data))
 
 def get_file_size(path = '.'):
     if os.path.isfile(path):

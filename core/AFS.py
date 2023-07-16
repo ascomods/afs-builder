@@ -6,11 +6,11 @@ import struct
 import re
 import core.utils as ut
 import core.common as cm
-from core.AFL import AFL
-from core.STPZ import STPZ, OLCS, ODCS, SCDO, SCLO
-from core.STPK import STPK
-from core.SPRP import SPRP
-from core.SPR3 import SPR3
+from colorama import Fore, Style
+from core.AFL import *
+from core.STPZ import *
+from core.STPZ_LZ import *
+from core.STPK import *
 
 class AFS:
     def __init__(self, name = ''):
@@ -39,6 +39,7 @@ class AFS:
         self.entry_info_offset = ut.b2i(stream.read(4))
 
     def read(self, stream):
+        ut.toggle_endian()
         # Reading data info after data tag
         stream.seek(4)
         self.file_count = ut.b2i(stream.read(4))
@@ -52,21 +53,24 @@ class AFS:
             if entry.name == '':
                 entry.name = f"unnamed_{i}"
             self.entries.append(entry)
+        ut.toggle_endian()
 
     def compress(self):
         for entry in self.entries:
             entry.compress()
+        self.update_offsets()
 
     def decompress(self):
         for i in range(len(self.entries)):
             self.entries[i].decompress()
 
     def write(self, stream):
+        if (ut.endian == 'big'):
+            ut.toggle_endian()
         # Writing entry offset + size
         stream.write(ut.s2b_name(self.__class__.__name__) + b'\x00')
         stream.write(ut.i2b(len(self.entries)))
 
-        
         for entry in self.entries:
             try:
                 stream.write(ut.i2b(entry.offset))
@@ -127,7 +131,7 @@ class AFS:
     def save_AFL(self, stream):
         afl_object = AFL()
         for entry in self.entries:
-            afl_object.add(ut.s2b_name(entry.name))
+            afl_object.add(entry.name)
         afl_object.write(stream)
 
     def __repr__(self):
@@ -154,40 +158,95 @@ class AFSEntry:
 
     def compress(self):
         try:
-            data_tag = self.data[:4]
-            data_tag = ut.b2s_name(data_tag).replace('0', 'O')
+            if (self.data[:4] == b'STPZ'):
+                return
+            ut.init_decomp_dir()
+            temp_data_path = os.path.join(cm.decomp_path, self.name)
+            stream = open(temp_data_path, 'wb')
+            stream.write(self.data)
+            stream.flush()
+
             stpz_object = STPZ()
             stpz_object.data = self.data
-            stpz_object.compress()
-            self.data = stpz_object
+            stpz_path = stpz_object.compress(temp_data_path)
+            stream = open(stpz_path, 'rb')
+            self.data = stream.read()
+            self.name = os.path.basename(stpz_path)
+            self.size = len(self.data)
         except Exception as e:
-            odcs_object = ODCS()
-            odcs_object.data = self.data
-            odcs_object.compress()
-            self.data = odcs_object
+            print(f"{Fore.YELLOW}WARNING: dbrb_compressor error for file {self.name}")
+            print(f"Using LZ algorithm instead...{Style.RESET_ALL}")
+            ut.toggle_endian()
+            data_object = STPZ_LZ(self.name)
+            stream = open(temp_data_path, 'rb')
+            data_object.read(stream)
+            data_object.compress()
+
+            stream = BytesIO()
+            data_object.write(stream)
+            stream.seek(0)
+            self.data = stream.read()
+
+            name, ext = os.path.splitext(self.name)
+            if (ext.endswith(".spr")):
+                name += "_s"
+            elif (ext.endswith(".vram")):
+                name += "_v"
+            elif (ext.endswith(".ioram")):
+                name += "_i"
+            ext = cm.ext_map['STPZ_LZ'][0]
+            self.name = f"{name}{ext}"
+
+            self.size = len(self.data)
+
+            ut.toggle_endian()
 
     def decompress(self):
-        data_tag = self.data[:4]
         try:
-            data_tag = ut.b2s_name(data_tag).replace('0', 'O')
-            data_object = eval(data_tag)()
-            data_object.read(BytesIO(self.data[4:]))
-            self.data = data_object.decompress(True)
+            ut.init_decomp_dir()
+            temp_data_path = os.path.join(cm.decomp_path, self.name)
+            stream = open(temp_data_path, 'wb')
+            stream.write(self.data)
+            stream.flush()
+
+            try:
+                data_object = STPZ()
+                self.data = data_object.decompress(temp_data_path)
+            except Exception as e:
+                print(f"{Fore.YELLOW}WARNING: dbrb_compressor error for file {self.name}")
+                print(f"Using LZ algorithm instead...{Style.RESET_ALL}")
+                ut.toggle_endian()
+                stream = open(temp_data_path, 'rb')
+                data_tag = stream.read(4)
+                data_tag = data_tag.replace(b'0', b'O')
+                try:
+                    data_object = eval(data_tag)()
+                    data_object.read(stream)
+                    self.data = data_object.decompress(True)
+                except:
+                    print(f"{Fore.RED}ERROR: couldn't decompress {self.name}")
+                ut.toggle_endian()
 
             if hasattr(data_object, 'data'):
                 self.data = data_object.data
             data_class_name = self.data.__class__.__name__
             name, ext = os.path.splitext(self.name)
 
+            checkName = False
             if data_class_name != 'bytearray':
                 self.data.date = self.date
                 if (data_class_name in cm.ext_map):
                     ext = cm.ext_map[data_class_name][0]
-                    if (name.endswith("_s") and ("SPR" in data_class_name)):
-                        name = name[:-2]
                     self.name = f"{name}{ext}"
+                else:
+                    checkName = True
             else:
-                if (name.endswith("_v")):
+                checkName = True
+
+            if (checkName):
+                if (name.endswith("_s")):
+                    name = name[:-2] + ".spr"
+                elif (name.endswith("_v")):
                     name = name[:-2] + ".vram"
                 elif (name.endswith("_i")):
                     name = name[:-2] + ".ioram"
@@ -219,17 +278,17 @@ class AFSEntry:
         self.date = ut.get_mod_date(self.name)
 
     def save(self, path):
-        if (self.data.__class__.__name__ == 'bytes') or \
-           (self.data.__class__.__name__ == 'bytearray'):
-            path = os.path.join(path, self.name)
-            stream = open(path, 'wb')
-            stream.write(self.data)
-            stream.close()
-            date = time.mktime(self.date.timetuple())
-            os.utime(path, (date, date))
-        else:
-            self.data.name = self.name
-            self.data.save(path)
+        path = os.path.join(path, self.name)
+        if (self.data.__class__.__name__ not in ['bytes', 'bytearray']):
+            stream = BytesIO()
+            self.data.write(stream)
+            stream.seek(0)
+            self.data = stream.read()
+        stream = open(path, 'wb')
+        stream.write(self.data)
+        stream.close()
+        date = time.mktime(self.date.timetuple())
+        os.utime(path, (date, date))
 
     def __repr__(self):
         return (

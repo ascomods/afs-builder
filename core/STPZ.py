@@ -1,433 +1,60 @@
-from io import BytesIO
-import os
-import re
+import os, shutil
+import core.common as cm
 import core.utils as ut
-import core.LZCompression as lzc
-from core.STPK import STPK
-from core.SPRP import SPRP
-from core.SPR3 import SPR3
+import core.commands as cmd
+from io import BytesIO
+from .STPK import STPK
 
 class STPZ:
-    def __init__(self):
-        self.entries = []
+    def __init__(self, name = b''):
+        if (name.__class__.__name__ == 'str'):
+            name = ut.s2b_name(name)
+        self.name = name
 
-    def read(self, stream):
-        # Reading data info
-        stream.seek(12, os.SEEK_CUR) # ignore STPZ tag + ignore unknown bytes
-        file_tag = ut.b2s_name(stream.read(4)).replace('0', 'O')
-        try:
-            entry = eval(file_tag)()
-            entry.read(stream)
-            self.entries.append(entry)
-        except Exception:
-            pass
+    def load(self, path):
+        name, ext = os.path.splitext(os.path.basename(path))
+        stpk_object = STPK(ut.s2b_name(f"{name}.pak"))
+        stpk_object.load(path)
+        self.read_stpk_data(stpk_object)
 
-    def compress(self):
-        self.entries.clear()
-        entry_object = ODCS()
-        entry_object.data = self.data
-        entry_object.compress()
-        self.write(stream)
-
-        self.entries.append(entry_object)
-
-    def decompress(self, is_root_type = True):
-        self.is_root_type = is_root_type
-        data = bytearray()
-        for entry in self.entries:
-            data.extend(entry.decompress())
-        try:
-            data_object = eval(data[:4])()
-            data_object.read(BytesIO(data))
-        except Exception as e:
-            print(e)
-            print("Invalid file type")
-            return data
-        return data_object
+    def read_stpk_data(self, stpk_object):
+        stream = BytesIO()
+        stpk_object.write(stream)
+        stream.seek(0)
+        self.data = stream.read()
 
     def write(self, stream):
-        stream.write(ut.s2b_name(self.__class__.__name__))
-        stream.write(bytes(8))
-        stream.write(ut.i2b(16)) # write start offset
+        ut.clear_temp_dir()
+        temp_file_path = os.path.join(cm.temp_path, ut.b2s_name(self.name))
+        temp_stream = open(temp_file_path, 'wb')
+        temp_stream.write(self.data)
+        temp_stream.flush()
+        # Read data from compressed file
+        temp_file_out = temp_file_path + ".out"
+        open(temp_file_out, 'wb').close()
+        cmd.dbrb_compressor(temp_file_path, temp_file_out)
+        temp_stream = open(temp_file_out, 'rb')
+        data = temp_stream.read()
+        stream.write(data)
 
-        for entry in self.entries:
-            entry.write(stream)
+    def decompress(self, input_path):
+        path = ut.copy_to_temp_dir(input_path)
+        name, ext = os.path.splitext(os.path.basename(path))
+        stpk_path = os.path.join(cm.temp_path, name + '.pak')
+        cmd.dbrb_compressor(path, stpk_path)
 
-    def __repr__(self):
-        return (
-            f'\nclass: {self.__class__.__name__}\n'
-            f'\nentry count: {len(self.entries)}\n'
-            f'\nentries: {self.entries}\n'
-        )
-
-class ODCS:
-    def __init__(self):
-        self.entries = []
-    
-    def read(self, stream):
-        self.uncompressed_size = ut.b2i(stream.read(4))
-        self.compressed_size = ut.b2i(stream.read(4))
-        self.chunk_size = ut.b2i(stream.read(4))
-        # get entry count with // round down
-        self.entry_count = -(- self.uncompressed_size // self.chunk_size)
-
-        for i in range(self.entry_count):
-            file_tag = ut.b2s_name(stream.read(4)).replace('0', 'O')
-            try:
-                entry = eval(file_tag)()
-                entry.read(stream)
-                self.entries.append(entry)
-            except Exception as e:
-                pass
-    
-    def compress(self, with_olcs = True, chunk_size = 15360):
-        self.entries.clear()
-        self.chunk_size = chunk_size
-        self.uncompressed_size = len(self.data)
-        self.entry_count = -(- len(self.data) // self.chunk_size)
-        self.data = lzc.compress_data(self.data)
-        self.compressed_size = len(self.data) + 16 # including ODCS header size
-        self.entry_size = -(- len(self.data) // self.entry_count)
-
-        for i in range(self.entry_count):
-            pos = (i * self.entry_size) % len(self.data)
-            chunk = self.data[pos:]
-            entry_object = OLCS()
-            entry_object.uncompressed_size = self.chunk_size
-            entry_object.data = chunk
-            entry_object.compressed_size = len(chunk)
-            self.entries.append(entry_object)
-            self.compressed_size += 16 # including OLCS header size
-    
-    def decompress(self, is_root_type = False):
-        self.is_root_type = is_root_type
-        data = bytearray()
-        for entry in self.entries:
-            entry.decompress()
-            data.extend(entry.data)
-        if is_root_type:
-            try:
-                data_object = eval(data[:4])()
-                data_object.read(BytesIO(data))
-                if hasattr(self, "name"):
-                    data_object.name = self.name
-                data = data_object
-            except Exception as e:
-                self.data = data
-                return self
-        return data
-
-    def write(self, stream):
-        stream.write(ut.s2b_name(self.__class__.__name__.replace('O', '0')))
-        stream.write(ut.i2b(self.uncompressed_size))
-        stream.write(ut.i2b(self.compressed_size))
-        stream.write(ut.i2b(self.chunk_size))
-
-        for entry in self.entries:
-            entry.write(stream)
-
-    def save(self, path):
-        stream = open(path + self.name, 'wb')
-        stream.write(self.data)
+        base_name, ext = os.path.splitext(ut.b2s_name(self.name))
+        stpk_object = STPK(ut.s2b_name(f"{base_name}.pak"))
+        stream = open(stpk_path, 'rb')
+        stpk_object.read(stream)
         stream.close()
-        date = time.mktime(self.date.timetuple())
-        os.utime(path + self.name, (date, date))
+        return stpk_object
 
-    def __repr__(self):
-        return (
-            f'\nclass: {self.__class__.__name__}\n'
-            f'\nentry count: {len(self.entries)}\n'
-            f'\nentries: {self.entries}\n'
-        )
-
-class OLCS:   
-    def read(self, stream):
-        self.uncompressed_size = ut.b2i(stream.read(4))
-        self.compressed_size = ut.b2i(stream.read(4))
-        stream.seek(4, os.SEEK_CUR) # ignore unknown bytes
-        self.read_data(stream)
-    
-    def read_data(self, stream):
-        self.data = stream.read(self.compressed_size - 16) # minus OLDS header size
-
-    def compress(self):
-       self.uncompressed_size = len(self.data)
-       self.data = lzc.compress_data(self.data)
-       self.compressed_size = len(self.data)
-
-    def decompress(self):
-        try:
-            self.data = lzc.decompress_data(self.data)
-        except Exception as e:
-            pass
-    
-    def write(self, stream):
-        stream.write(ut.s2b_name(self.__class__.__name__.replace('O', '0')))
-        stream.write(ut.i2b(self.uncompressed_size))
-        stream.write(ut.i2b(self.compressed_size))
-        stream.write(bytes(4)) # write unknown bytes
-        stream.write(self.data)      
-
-    def __repr__(self):
-        return (
-            f'\nclass: {self.__class__.__name__}\n'
-            f'\ndata size: {len(self.data)}\n'
-        )
-
-
-######## UT_TEST #########
-
-
-class SCDO:
-    def __init__(self):
-        self.entries = []
-    
-    def read(self, stream):
-        ut.endian = '>'
-
-        self.uncompressed_size = ut.b2i(stream.read(4))
-        self.compressed_size = ut.b2i(stream.read(4))
-        self.chunk_size = ut.b2i(stream.read(4))
-        # get entry count with // round down
-        self.entry_count = -(- self.uncompressed_size // self.chunk_size)
-
-        for i in range(self.entry_count):
-            file_tag = ut.b2s_name(stream.read(4)).replace('0', 'O')
-            
-            try:
-                entry = eval(file_tag)()
-                entry.read(stream)
-                self.entries.append(entry)
-            except Exception as e:
-                pass
-        
-        ut.endian = '<'
-    
-    def compress(self, with_olcs = True, chunk_size = 15360):
-        self.entries.clear()
-        self.chunk_size = chunk_size
-        self.uncompressed_size = len(self.data)
-        self.entry_count = -(- len(self.data) // self.chunk_size)
-        self.data = lzc.compress_data(self.data)
-        self.compressed_size = len(self.data) + 16 # including ODCS header size
-        self.entry_size = -(- len(self.data) // self.entry_count)
-
-        for i in range(self.entry_count):
-            pos = (i * self.entry_size) % len(self.data)
-            chunk = self.data[pos:]
-            entry_object = OLCS()
-            entry_object.uncompressed_size = self.chunk_size
-            entry_object.data = chunk
-            entry_object.compressed_size = len(chunk)
-            self.entries.append(entry_object)
-            self.compressed_size += 16 # including OLCS header size
-    
-    def decompress(self, is_root_type = False):
-        ut.endian = '>'
-
-        self.is_root_type = is_root_type
-        data = bytearray()
-        for entry in self.entries:
-            entry.decompress()
-            data.extend(entry.data)
-        if is_root_type:
-            try:
-                data_object = eval(data[:4])()
-                data_object.read(BytesIO(data))
-                data = data_object
-            except Exception as e:
-                self.data = data
-                ut.endian = '<'
-
-                return self
-
-        ut.endian = '<'
-        
-        return data
-
-    def write(self, stream):
-        stream.write(ut.s2b_name(self.__class__.__name__.replace('O', '0')))
-        stream.write(ut.i2b(self.uncompressed_size))
-        stream.write(ut.i2b(self.compressed_size))
-        stream.write(ut.i2b(self.chunk_size))
-
-        for entry in self.entries:
-            entry.write(stream)
-
-    def save(self, path):
-        stream = open(path + self.name, 'wb')
-        stream.write(self.data)
-        stream.close()
-        date = time.mktime(self.date.timetuple())
-        os.utime(path + self.name, (date, date))
-
-    def __repr__(self):
-        return (
-            f'\nclass: {self.__class__.__name__}\n'
-            f'\nentry count: {len(self.entries)}\n'
-            f'\nentries: {self.entries}\n'
-        )
-
-class SCLO:   
-    def read(self, stream):
-        ut.endian = '>'
-
-        self.uncompressed_size = ut.b2i(stream.read(4))
-        self.compressed_size = ut.b2i(stream.read(4))
-        stream.seek(4, os.SEEK_CUR) # ignore unknown bytes
-        self.read_data(stream)
-
-        ut.endian = '<'
-    
-    def read_data(self, stream):
-        self.data = stream.read(self.compressed_size - 16) # minus OLDS header size
-
-    def compress(self):
-       self.uncompressed_size = len(self.data)
-       self.data = lzc.compress_data(self.data)
-       self.compressed_size = len(self.data)
-
-    def decompress(self):
-        ut.endian = '>'
-
-        try:
-            self.data = lzc.decompress_data(self.data)
-        except Exception as e:
-            pass
-        
-        ut.endian = '<'
-    
-    def write(self, stream):
-        stream.write(ut.s2b_name(self.__class__.__name__.replace('O', '0')))
-        stream.write(ut.i2b(self.uncompressed_size))
-        stream.write(ut.i2b(self.compressed_size))
-        stream.write(bytes(4)) # write unknown bytes
-        stream.write(self.data)      
-
-    def __repr__(self):
-        return (
-            f'\nclass: {self.__class__.__name__}\n'
-            f'\ndata size: {len(self.data)}\n'
-        )
-
-
-######## ZB_TEST #########
-
-
-class HLCS:
-    def __init__(self):
-        self.entries = []
-    
-    def read(self, stream):
-        self.uncompressed_size = ut.b2i(stream.read(4))
-        self.compressed_size = ut.b2i(stream.read(4))
-        self.chunk_size = ut.b2i(stream.read(4))
-        # get entry count with // round down
-        self.entry_count = 1
-
-        for i in range(self.entry_count):
-            file_tag = ut.b2s_name(stream.read(4)).replace('0', 'O')
-            try:
-                entry = eval(file_tag)()
-                entry.read(stream)
-                self.entries.append(entry)
-            except Exception as e:
-                import traceback
-                print(traceback.format_exc())
-                pass
-    
-    def compress(self, with_olcs = True, chunk_size = 10020):
-        self.entries.clear()
-        self.chunk_size = chunk_size
-        self.uncompressed_size = len(self.data)
-        self.entry_count = -(- len(self.data) // self.chunk_size)
-        self.data = lzc.compress_data(self.data)
-        self.compressed_size = len(self.data) + 16 # including ODCS header size
-        self.entry_size = -(- len(self.data) // self.entry_count)
-
-        for i in range(self.entry_count):
-            pos = (i * self.entry_size) % len(self.data)
-            chunk = self.data[pos:]
-            entry_object = OLCS()
-            entry_object.uncompressed_size = self.chunk_size
-            entry_object.data = chunk
-            entry_object.compressed_size = len(chunk)
-            self.entries.append(entry_object)
-            self.compressed_size += 16 # including OLCS header size
-    
-    def decompress(self, is_root_type = False):
-        self.is_root_type = is_root_type
-        data = bytearray()
-        for entry in self.entries:
-            entry.decompress()
-            data.extend(entry.data)
-        if is_root_type:
-            try:
-                data_object = eval(data[:4])()
-                data_object.read(BytesIO(data))
-                data = data_object
-            except Exception as e:
-                self.data = data
-                return self
-        self.data = data
-        return data
-
-    def write(self, stream):
-        stream.write(ut.s2b_name(self.__class__.__name__.replace('O', '0')))
-        stream.write(ut.i2b(self.uncompressed_size))
-        stream.write(ut.i2b(self.compressed_size))
-        stream.write(ut.i2b(self.chunk_size))
-
-        for entry in self.entries:
-            entry.write(stream)
-
-    def save(self, path):
-        stream = open(path + self.name, 'wb')
-        stream.write(self.data)
-        stream.close()
-        date = time.mktime(self.date.timetuple())
-        os.utime(path + self.name, (date, date))
-
-    def __repr__(self):
-        return (
-            f'\nclass: {self.__class__.__name__}\n'
-            f'\nentry count: {len(self.entries)}\n'
-            f'\nentries: {self.entries}\n'
-        )
-
-class OHCS:   
-    def read(self, stream):
-        self.uncompressed_size = ut.b2i(stream.read(4))
-        self.compressed_size = ut.b2i(stream.read(4))
-        stream.seek(4, os.SEEK_CUR) # ignore unknown bytes
-        self.read_data(stream)
-
-    def read_data(self, stream):
-        self.data = stream.read(self.compressed_size - 16) # minus OLDS header size
-
-    def compress(self):
-       self.uncompressed_size = len(self.data)
-       self.data = lzc.compress_data(self.data)
-       self.compressed_size = len(self.data)
-
-    def decompress(self):
-        try:
-            self.data = lzc.decompress_data(self.data)
-        except Exception as e:
-            print(e)
-            import traceback
-            print(traceback.format_exc())
-            pass
-    
-    def write(self, stream):
-        stream.write(ut.s2b_name(self.__class__.__name__.replace('O', '0')))
-        stream.write(ut.i2b(self.uncompressed_size))
-        stream.write(ut.i2b(self.compressed_size))
-        stream.write(bytes(4)) # write unknown bytes
-        stream.write(self.data)      
-
-    def __repr__(self):
-        return (
-            f'\nclass: {self.__class__.__name__}\n'
-            f'\ndata size: {len(self.data)}\n'
-        )
+    def compress(self, input_path, output_path = ''):
+        name, ext = os.path.splitext(os.path.basename(input_path))
+        stpz_path = os.path.join(cm.temp_path, name + '.zpak')
+        cmd.dbrb_compressor(input_path, stpz_path)
+        if (output_path != ''):
+            shutil.move(stpz_path, output_path)
+            return output_path
+        return stpz_path

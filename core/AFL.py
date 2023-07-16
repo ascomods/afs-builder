@@ -17,7 +17,8 @@ class AFL:
 
         start_entry_offset = stream.tell()
         for i in range(entry_count):
-            self.entries.append(ut.read_until(stream, start_entry_offset + i * self.entry_name_size))
+            entry_name = ut.read_until(stream, start_entry_offset + i * self.entry_name_size)
+            self.entries.append(ut.b2s_name(entry_name))
 
     def write(self, stream):
         stream.write(ut.s2b_name(self.__class__.__name__) + b'\0')
@@ -26,7 +27,8 @@ class AFL:
         stream.write(ut.i2b(len(self.entries)))
 
         for entry in self.entries:
-            stream.write(entry.ljust(32, b'\0'))
+            entry_name = ut.s2b_name(entry)
+            stream.write(entry_name.ljust(32, b'\0'))
     
     def __repr__(self):
         return (
