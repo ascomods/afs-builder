@@ -5,6 +5,7 @@ import core.common as cm
 
 base_paths = [
     '',
+    cm.run_path,
     os.path.join(cm.run_path, 'misc')
 ]
 

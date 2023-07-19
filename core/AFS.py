@@ -233,7 +233,7 @@ class AFSEntry:
             name, ext = os.path.splitext(self.name)
 
             checkName = False
-            if data_class_name != 'bytearray':
+            if 'byte' not in data_class_name:
                 self.data.date = self.date
                 if (data_class_name in cm.ext_map):
                     ext = cm.ext_map[data_class_name][0]

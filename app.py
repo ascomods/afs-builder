@@ -10,7 +10,7 @@ from core.STPZ_LZ import *
 if __name__ == "__main__":
     ut.clear_temp_dir()
 
-    parser = argparse.ArgumentParser(description='AFS Builder v0.1')
+    parser = argparse.ArgumentParser(description='AFS Builder v0.1.3')
     parser.add_argument('-afl', '--afl', nargs='?', help="AFL path")
     parser.add_argument('-b', '--build', nargs='?', help="Input folder to repack")
     parser.add_argument('-c', '--compress', nargs='?', help="Compress files when repacking (default: False)")
@@ -41,10 +41,10 @@ if __name__ == "__main__":
             print(f"{Fore.GREEN}Output AFL path: {afl_path}{Style.RESET_ALL}")
             print(f"Saving AFL file...")
 
-            if (args.force == "True"):
+            if (args.force == "False"):
                 if (os.path.exists(afl_path)):
-                    print(f"{Fore.RED}ERROR: AFL file already exists (use -f to force overwrite).{Style.RESET_ALL}")
-                    exit(1)
+                    print(f"{Fore.RED}ERROR: AFL file already exists (use '-f True' to force overwrite).{Style.RESET_ALL}")
+                    sys.exit(1)
 
             ut.make_parent_dirs(afl_path)
             stream = open(afl_path, 'wb')
@@ -67,10 +67,10 @@ if __name__ == "__main__":
 
         print(f"{Fore.GREEN}Output path: {output_path}{Style.RESET_ALL}")
 
-        if (args.force == "True"):
+        if (args.force == "False"):
             if (os.path.exists(output_path) and (len(os.listdir(output_path)) > 0)):
-                print(f"{Fore.RED}ERROR: Output folder already exists and is not empty (use -f to force overwrite).{Style.RESET_ALL}")
-                exit(1)
+                print(f"{Fore.RED}ERROR: Output folder already exists and is not empty (use '-f True' to force overwrite).{Style.RESET_ALL}")
+                sys.exit(1)
 
         if (args.decompress == "True"):
             print(f"Decompressing files...")
@@ -83,7 +83,7 @@ if __name__ == "__main__":
         print(f"{Fore.GREEN}Input folder path: {args.build}{Style.RESET_ALL}")
         if (not os.path.exists(args.build)):
             print(f"{Fore.RED}ERROR: Input folder not found.{Style.RESET_ALL}")
-            exit(1)
+            sys.exit(1)
 
         input_name = os.path.basename(args.build)
         name = input_name + ".afs"
@@ -99,10 +99,10 @@ if __name__ == "__main__":
 
         print(f"{Fore.GREEN}Output path: {output_path}{Style.RESET_ALL}")
 
-        if (args.force != None):
+        if (args.force == "False"):
             if (os.path.exists(output_path)):
-                print(f"{Fore.RED}ERROR: Output file already exists (use -f to force overwrite).{Style.RESET_ALL}")
-                exit(1)
+                print(f"{Fore.RED}ERROR: Output file already exists (use '-f True' to force overwrite).{Style.RESET_ALL}")
+                sys.exit(1)
 
         if (args.compress == "True"):
             print(f"Compressing files...")
@@ -136,7 +136,7 @@ if __name__ == "__main__":
 
             if (len(afl_object.entries) != len(afs_object.entries)):
                 print(f"{Fore.RED}ERROR: Entry count mismatch between provided AFL and AFS file.{Style.RESET_ALL}")
-                exit(1)
+                sys.exit(1)
 
             for i in range(len(afs_object.entries)):
                 afs_object.entries[i].name = afl_object.entries[i]
